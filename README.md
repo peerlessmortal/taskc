@@ -1,110 +1,179 @@
-# sfetch
+# taskc
 
-A neofetch-style terminal fetch tool that turns your [tuxedo](https://github.com/webstonehq/tuxedo) / todo.txt task history into a gamified ASCII radar chart — Persona-confidant-style attribute levels, built from the tasks you've actually completed.
+Two small C tools that work off the same plain-text task file:
 
-`sfetch` doesn't manage tasks itself. Add and complete tasks with `tuxedo`, any other todo.txt-cli compatible tool, or by hand — `sfetch` only *reads* the resulting `todo.txt` / `done.txt` and renders the chart.
+- **`taskc`** — a keyboard-driven terminal task manager. A full interactive TUI plus a minimal CLI for quick add/complete/archive.
+- **`sfetch`** — a companion neofetch-style fetch tool that turns your completed tasks into a gamified ASCII radar chart.
 
----
-
-## Features
-
-- **ASCII radar chart** — a 5-axis spider chart drawn with Unicode glyphs (`✦` center, `◆` vertices, `●` edges, `·` guides), filled with a 5-tier gray gradient (donut.c-style radial brightness falloff) when your terminal supports color.
-- **5 tracked attributes**, each earning points from tagged tasks:
-
-  | Attribute   | Marker |
-  |-------------|--------|
-  | Knowledge   | `!k`   |
-  | Vitality    | `!v`   |
-  | Diligence   | `!d`   |
-  | Charm       | `!c`   |
-  | Proficiency | `!p`   |
-
-- **Level system (1–6)**, not raw points — thresholds grow exponentially so each level means more than the last:
-
-  | Level | Points needed |
-  |-------|---------------|
-  | 1     | 0 (the floor — always at least Level 1) |
-  | 2     | 3   |
-  | 3     | 9   |
-  | 4     | 21  |
-  | 5     | 45  |
-  | 6     | 93  |
-
-  Points cap at 100 per attribute. The chart's axis length is level-driven (`level / 6`), not points-driven, and six concentric rings mark each level boundary — a proper spider-chart grid, not just an outline.
-- **Multiple markers per task** — a single completed task can feed more than one attribute: `tuxedo add "helped a friend cram for finals !k !v"`.
-- **Recognizes recurring and one-off completions the same way** — every completed (`x `-prefixed) line counts once, whether it's a single task or the 40th instance of a recurring habit.
-- **Two display modes**:
-  - `sfetch` (default) — chart beside a neofetch-style system info panel (OS, Kernel, Uptime, Shell, Host).
-  - `sfetch -t` — chart beside your task/attribute stats instead (level bars, points, completion counts).
-- **Color-aware output** — fires 256-color ANSI only when stdout is a real terminal (`isatty()` check); piped or redirected output (`sfetch > file`, `sfetch | less`) stays plain glyphs, no stray escape codes.
+Both read and write the same `todo.txt` file, so they're meant to be used together — but each works fine on its own.
 
 ---
 
-## Build
+## Install
 
-Requires a C compiler and `libm`. No other dependencies.
+Both are single C files with no external dependencies beyond their libraries.
+
+**taskc** (needs `libncurses-dev`):
 
 ```sh
-make
-sudo make install   # optional — installs to /usr/local/bin
+sudo apt install libncurses-dev     # Debian/Ubuntu
+sudo pacman -S ncurses              # Arch
+
+cc -Wall -Wextra -O2 -std=c11 -o taskc main.c -lm -lncurses
 ```
 
-Or without the Makefile:
+**sfetch** (needs only `libm`, included with any standard C toolchain):
 
 ```sh
 gcc -Wall -Wextra -O2 -std=c11 -o sfetch main.c -lm
 ```
 
+Put either binary wherever's on your `$PATH` (e.g. `~/.local/bin`, or install system-wide to `/usr/local/bin`).
+
 ---
 
-## Usage
+## How taskc works
 
-Tag a task with `!<code>` to give it one point in the matching attribute:
+### Storage
+
+Plain `todo.txt`, resolved in this order:
+
+- `$TODO_FILE` → `$TODO_DIR/todo.txt` → `./todo.txt`
+- Completed/archived tasks go to `$DONE_FILE` → a sibling `done.txt` next to the todo file.
+
+### Launching
 
 ```sh
-tuxedo add "studied for exam +school !k"
-tuxedo do 3
+taskc              # opens the interactive TUI
+taskc add TEXT...  # one-shot: add a task and exit
+taskc do N         # one-shot: mark task N complete and exit
+taskc archive      # one-shot: move completed tasks into the done file
+```
+
+Any other input (including no recognized command) opens the TUI.
+
+### The TUI
+
+Keybinds, straight from the in-app help screen (`?`):
+
+**Navigation**
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | next task |
+| `k` / `↑` | previous task |
+| `gg` | first task |
+| `G` | last task |
+
+**Editing**
+
+| Key | Action |
+|-----|--------|
+| `n` | new task |
+| `e` | edit task |
+| `x` | toggle complete |
+| `dd` | delete task |
+| `p` | cycle priority `A → B → C → none` |
+| `u` | undo |
+
+**View**
+
+| Key | Action |
+|-----|--------|
+| `/` | fuzzy search |
+| `S` | cycle sort (file order / priority / due date / recurring) |
+| `h` | show completed tasks in the list (hidden by default) |
+| `A` | radar stats chart (see below) |
+
+**System**: `?` help, `q` quit.
+
+A left sidebar is always on screen, listing `+projects` (green) and `@contexts` (yellow) for the current task set, along with priority and attribute breakdowns — `Tab` moves focus into it to select an entry as a filter.
+
+### Due dates and recurrence
+
+Tasks support the standard todo.txt extensions: `due:YYYY-MM-DD` and `rec:[+]N{d,w,m,y,b}`. Completing a task that carries `rec:` automatically inserts a fresh copy with `due:` advanced by the interval:
+
+- No `+` prefix — the new due date is computed from **today** (the completion date).
+- `+` prefix — *strict*, anchored to the task's existing `due:` instead of today (so rent due the 15th stays on the 15th even if you complete it a few days late).
+- `d`/`w`/`m`/`y` are calendar days/weeks/months/years; `b` is business days (Mon–Fri only).
+
+Overdue, incomplete tasks are always pinned at the top of the list in red, regardless of whatever sort mode is active.
+
+### Color coding
+
+Every task line is colored by token: `+projects` green, `@contexts` yellow, `key:value` tags (`due:`, `rec:`, etc.) blue, and the priority prefix by letter (A red, B/C stepping down in intensity). Overdue tasks render as a solid red line instead, for visibility. All of it degrades gracefully to plain text on a terminal with no color support.
+
+### Radar stats chart (`A`)
+
+A full-screen view: the same 6-level attribute radar chart `sfetch` draws (see below), plus your level bars, shown directly inside taskc. It sizes itself to whatever terminal space is actually available, rather than assuming a fixed size.
+
+---
+
+## How sfetch works
+
+`sfetch` doesn't manage tasks — it only *reads* `todo.txt`/`done.txt` (same file, same resolution order as taskc) and renders a radar chart from what you've completed.
+
+### Marking tasks for sfetch
+
+Tag a task with `!<code>` to give it one point toward an attribute:
+
+```sh
+taskc add "studied for exam +school !k"
+taskc do 3
 sfetch
 ```
 
+| Attribute   | Marker |
+|-------------|--------|
+| Knowledge   | `!k`   |
+| Vitality    | `!v`   |
+| Diligence   | `!d`   |
+| Charm       | `!c`   |
+| Proficiency | `!p`   |
+
+Rules:
+- Only completed (`x `-prefixed) lines count, whether still in `todo.txt` or archived to `done.txt`.
+- A marker must be its own whitespace-separated token (`!k` counts; `!knowledge` or `studied!k` don't).
+- Case-insensitive. Each marker is worth exactly 1 point — stack them (`!k !k !k`) for a task worth more.
+- A completed task with no recognized marker still counts toward total completions, just not toward any attribute.
+
+### Levels, not raw points
+
+Points cap at 100 per attribute, but the chart and stat bars read off a derived **Level (1–6)** with exponentially growing thresholds, so progress actually means something at each step:
+
+| Level | Points needed |
+|-------|---------------|
+| 1 | 0 (the floor — always at least Level 1) |
+| 2 | 3 |
+| 3 | 9 |
+| 4 | 21 |
+| 5 | 45 |
+| 6 | 93 |
+
+The chart's axis length is level-driven (`level / 6`), with six concentric rings marking each level boundary.
+
+### Display modes
+
 ```sh
-sfetch                 # chart + system info (default)
-sfetch -t               # chart + task/attribute stats
-sfetch fetch             # same as sfetch
-sfetch fetch -t          # same as sfetch -t
-sfetch attrs              # show current attribute names + codes
+sfetch                 # chart + system info (OS, Kernel, Uptime, Shell, Host)
+sfetch -t               # chart + task/attribute stats instead
+```
+
+Interior fill uses a 5-tier gray gradient (radial brightness falloff from center) when stdout is a real terminal; piped or redirected output stays plain glyphs, no stray ANSI codes.
+
+### sfetch's own config
+
+```sh
+sfetch attrs                                                        # show current names/codes
 sfetch attrs Knowledge:k Vitality:v Diligence:d Charm:c Proficiency:p   # rename/recode all 5
 ```
 
-Rules:
-
-- Only completed (`x `-prefixed) lines are scanned — whether still in `todo.txt` or archived to `done.txt`.
-- A marker must be its own whitespace-separated token: `!k` counts; `!knowledge`, `!k2`, and `studied!k` do not.
-- Matching is case-insensitive (`!K` works).
-- Each marker is worth exactly 1 point — no weighting. Want a task to count for more? Add the marker more than once: `!k !k !k` = 3 Knowledge points from one task.
-- A completed task with no recognized marker still counts toward total completions, just not toward any attribute.
+Stored in `~/.config/sfetch/attributes.conf`. Renaming only affects matching going forward — it won't retag tasks already written with an old code.
 
 ---
 
-## File resolution
+## Credits
 
-Same resolution order as `tuxedo`, so one `$TODO_DIR` setup covers both tools:
-
-- todo file: `$TODO_FILE` → `$TODO_DIR/todo.txt` → `./todo.txt`
-- done file: `$DONE_FILE` → sibling `done.txt` next to the todo file
-
-`sfetch`'s own state is just the 5 attribute display names/codes:
-
-- `~/.config/sfetch/attributes.conf` — one `Name:code` line per attribute
-
-Renaming via `sfetch attrs ...` only affects matching going forward — it doesn't retag tasks already written with the old code.
-
----
-
-## Why a Level system instead of raw points
-
-Raw point totals don't feel like progress the same way a level does — and a flat per-point scale means the first few tasks you complete look identical to the hundredth. Thresholds growing exponentially (0 → 3 → 9 → 21 → 45 → 93) means early levels come fast, and the top level actually means something.
-
----
+The idea for a fast, keyboard-driven todo.txt tool came from [tuxedo](https://github.com/webstonehq/tuxedo) by webstonehq. `taskc` is an independent C rewrite built from that idea, not a fork — it shares no code with the original Rust project.
 
 Built with AI assistance (Claude, Gemini).
