@@ -10,11 +10,11 @@ all: $(BUILD_DIR)/taskc $(BUILD_DIR)/sfetch
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BUILD_DIR)/taskc: taskc/main.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) taskc/main.c -o $@ $(LDFLAGS)
+$(BUILD_DIR)/taskc: src/taskc/main.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) src/taskc/main.c -o $@ $(LDFLAGS)
 
-$(BUILD_DIR)/sfetch: sfetch/main.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) sfetch/main.c -o $@ $(LDFLAGS)
+$(BUILD_DIR)/sfetch: src/sfetch/main.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) src/sfetch/main.c -o $@ $(LDFLAGS)
 
 clean:
 	rm -rf $(BUILD_DIR) *.tmp .tuxedo_config
@@ -34,9 +34,4 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/taskc
 	rm -f $(DESTDIR)$(PREFIX)/bin/sfetch
 
-update:
-	@echo "Pulling latest changes from git..."
-	git pull
-	$(MAKE) install
-
-.PHONY: all clean install uninstall update
+.PHONY: all clean install uninstall
