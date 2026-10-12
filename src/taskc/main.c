@@ -1629,9 +1629,10 @@ static void tui_show_help(void) {
   } edit[] = {
       {"n", "new task"},
       {"e", "edit task"},
+      {"yy", "copy task"},
       {"x", "toggle complete"},
       {"dd", "delete task"},
-      {"p", "cycle priority A->B->C->."},
+      {"p", "cycle priority"},
       {"u", "undo"},
   };
   struct {
@@ -1642,7 +1643,7 @@ static void tui_show_help(void) {
       {"q", "quit"},
   };
 
-  int edit_count = 6;
+  int edit_count = 7;
   for (int i = 0; i < edit_count; i++) {
     int r = row + i;
     attron(COLOR_PAIR(CP_HELP_KEY));
@@ -1669,7 +1670,6 @@ static void tui_show_help(void) {
 #define NUM_GRAY_LEVELS 6
 static const int radar_color_pairs[NUM_GRAY_LEVELS] = {
     CP_RADAR_1, CP_RADAR_2, CP_RADAR_3, CP_RADAR_4, CP_RADAR_5, CP_RADAR_6};
-/* Borderlines (+) and (*) replaced with spaces to remove edges/vertices */
 static const char *chart_glyph[] = {" ", "\u00b7", " ", " ", "#"};
 
 static int point_in_poly(double px, double py, const int *vx, const int *vy,
@@ -2098,6 +2098,9 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
   int rep_unit = 2;
   int rep_field = 0;
 
+  int trigger_calendar = 0;
+  int trigger_repeat = 0;
+
   while (1) {
     curs_set(1); /* Ensure cursor is visible during prompt loop */
     int h, w;
@@ -2134,21 +2137,25 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
     attroff(A_BOLD);
 
     mvprintw(top + 2, left + 2, "> ");
-    mvprintw(top + 2, left + 4, "%s", work);
+
+    /* Horizontal Scrolling & Color Coding Fix */
+    int max_input_w = box_w - 6;
+    int xscroll = 0;
+    if (cpos >= max_input_w) {
+      xscroll = cpos - max_input_w + 1;
+    }
+    
+    char visible_slice[MAX_LINE];
+    snprintf(visible_slice, sizeof(visible_slice), "%s", work + xscroll);
+    render_colored_text_line(top + 2, left + 4, max_input_w, visible_slice, 0, 0, 0);
 
     attron(A_DIM);
     mvprintw(top + 4, left + 2,
              "format: (A) Buy milk +shop @home due:2026-05-12 rec:2d");
     attroff(A_DIM);
 
-    int is_due_mode = 0;
-    int is_rec_mode = 0;
-
-    if (cpos >= 4 && strncasecmp(&work[cpos - 4], "due:", 4) == 0) {
-      is_due_mode = 1;
-    } else if (cpos >= 4 && strncasecmp(&work[cpos - 4], "rec:", 4) == 0) {
-      is_rec_mode = 1;
-    }
+    int is_due_mode = trigger_calendar;
+    int is_rec_mode = trigger_repeat;
 
     int start = cpos;
     while (start > 0 && work[start - 1] != ' ' && work[start - 1] != '\t')
@@ -2207,9 +2214,7 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
       }
     }
 
-    int cursor_x = left + 4 + cpos;
-    if (cursor_x >= left + box_w - 1)
-      cursor_x = left + box_w - 2;
+    int cursor_x = left + 4 + (cpos - xscroll);
     move(top + 2, cursor_x);
 
     int sidebar_x = w - SIDEBAR_WIDTH;
@@ -2226,7 +2231,7 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
     printw("%-*s", SIDEBAR_WIDTH + 1, " EDITING");
     attroff(COLOR_PAIR(CP_MODE) | A_BOLD);
 
-    /* Explicitly place and refresh the physical hardware cursor position */
+    /* Explicitly place and refresh physical hardware cursor position */
     move(top + 2, cursor_x);
     refresh();
 
@@ -2268,7 +2273,9 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
           len += 10;
           cpos += 10;
         }
-      } else if (ch == 27 || ch == 'x') {
+        trigger_calendar = 0;
+      } else if (ch == 27) {
+        trigger_calendar = 0;
       } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
         if (cpos > 0) {
           memmove(&work[cpos - 1], &work[cpos], (size_t)(len - cpos + 1));
@@ -2276,6 +2283,7 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
           len--;
           work[len] = '\0';
         }
+        trigger_calendar = 0;
       }
       continue;
     }
@@ -2306,7 +2314,9 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
           len += (int)strlen(rstr);
           cpos += (int)strlen(rstr);
         }
+        trigger_repeat = 0;
       } else if (ch == 27) {
+        trigger_repeat = 0;
       } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
         if (cpos > 0) {
           memmove(&work[cpos - 1], &work[cpos], (size_t)(len - cpos + 1));
@@ -2314,6 +2324,7 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
           len--;
           work[len] = '\0';
         }
+        trigger_repeat = 0;
       }
       continue;
     }
@@ -2365,6 +2376,12 @@ static int tui_task_prompt(const char *title, char *buf, size_t buf_sz) {
       len++;
       work[len] = '\0';
       sug_sel = 0;
+
+      if (ch == ':' && cpos >= 4 && strncasecmp(&work[cpos - 4], "due:", 4) == 0) {
+        trigger_calendar = 1;
+      } else if (ch == ':' && cpos >= 4 && strncasecmp(&work[cpos - 4], "rec:", 4) == 0) {
+        trigger_repeat = 1;
+      }
     }
   }
 }
@@ -2392,7 +2409,7 @@ static void run_tui(void) {
     tui_init_colors();
 
   int task_cursor = 0;
-  int pending_g = 0, pending_d = 0;
+  int pending_g = 0, pending_d = 0, pending_y = 0;
   int sort_mode = load_sort_preference();
   int sidebar_focus = 0, sidebar_cursor = 0;
 
@@ -2564,6 +2581,19 @@ static void run_tui(void) {
       }
       continue;
     }
+    if (pending_y) {
+      pending_y = 0;
+      if (ch == 'y' && n > 0 && task_count < MAX_TASKS) {
+        int dr = display_row_for_task_cursor(rows, nrows, task_cursor);
+        int idx = rows[dr].task_idx;
+        push_undo();
+        tasks[task_count].text = strdup(tasks[idx].text);
+        task_count++;
+        save_tasks(g_todo_path);
+        task_cursor = n;
+      }
+      continue;
+    }
 
     switch (ch) {
     case 'j':
@@ -2585,6 +2615,9 @@ static void run_tui(void) {
       break;
     case 'd':
       pending_d = 1;
+      break;
+    case 'y':
+      pending_y = 1;
       break;
     case 'h':
       tui_show_done = !tui_show_done;
